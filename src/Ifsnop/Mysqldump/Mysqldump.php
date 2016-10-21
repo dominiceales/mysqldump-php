@@ -151,7 +151,6 @@ class Mysqldump
 
         $this->user = $user;
         $this->pass = $pass;
-        $this->parseDsn($dsn);
         $this->pdoSettings = self::array_replace_recursive($pdoSettingsDefault, $pdoSettings);
         $this->dumpSettings = self::array_replace_recursive($dumpSettingsDefault, $dumpSettings);
 
@@ -266,45 +265,64 @@ class Mysqldump
     private function connect()
     {
         // Connecting with PDO
-        try {
-            switch ($this->dbType) {
-                case 'sqlite':
-                    $this->dbHandler = @new PDO("sqlite:" . $this->dbName, null, null, $this->pdoSettings);
-                    break;
-                case 'mysql':
-                case 'pgsql':
-                case 'dblib':
-                    $this->dbHandler = @new PDO(
-                        $this->dsn,
-                        $this->user,
-                        $this->pass,
-                        $this->pdoSettings
-                    );
-                    // Execute init commands once connected
-                    foreach($this->dumpSettings['init_commands'] as $stmt) {
-                        $this->dbHandler->exec($stmt);
-                    }
-                    // Store server version
-                    $this->version = $this->dbHandler->getAttribute(PDO::ATTR_SERVER_VERSION);
-                    break;
-                default:
-                    throw new Exception("Unsupported database type (" . $this->dbType . ")");
+        if (empty($this->dbHandler)) {
+            try {
+                $this->parseDsn($dsn);
+                switch ($this->dbType) {
+                    case 'sqlite':
+                        $this->dbHandler = @new PDO("sqlite:" . $this->dbName, null, null, $this->pdoSettings);
+                        break;
+                    case 'mysql':
+                    case 'pgsql':
+                    case 'dblib':
+                        $this->dbHandler = @new PDO(
+                            $this->dsn,
+                            $this->user,
+                            $this->pass,
+                            $this->pdoSettings
+                        );
+                        // Execute init commands once connected
+                        foreach($this->dumpSettings['init_commands'] as $stmt) {
+                            $this->dbHandler->exec($stmt);
+                        }
+                        // Store server version
+                        $this->version = $this->dbHandler->getAttribute(PDO::ATTR_SERVER_VERSION);
+                        break;
+                    default:
+                        throw new Exception("Unsupported database type (" . $this->dbType . ")");
+                }
+            } catch (PDOException $e) {
+                throw new Exception(
+                    "Connection to " . $this->dbType . " failed with message: " .
+                    $e->getMessage()
+                );
             }
-        } catch (PDOException $e) {
-            throw new Exception(
-                "Connection to " . $this->dbType . " failed with message: " .
-                $e->getMessage()
-            );
         }
 
         if ( is_null($this->dbHandler) ) {
             throw new Exception("Connection to ". $this->dbType . "failed");
         }
-
+        
         $this->dbHandler->setAttribute(PDO::ATTR_ORACLE_NULLS, PDO::NULL_NATURAL);
         $this->typeAdapter = TypeAdapterFactory::create($this->dbType, $this->dbHandler);
     }
 
+    /**
+     * Adds the database handler
+     * @param PDO $dbHandler
+     * @throws Exception
+     */
+    public function setDatabaseHandler(\PDO $dbHandler) {
+        if (!$dbHandler instanceof \PDO) {
+            throw new Exception(
+                "Database handler must be instance of class \PDO"
+            );
+        }
+
+        $this->dbHandler = $dbHandler;
+        $this->dbType = $dbHandler->getAttribute(PDO::ATTR_DRIVER_NAME);
+    }
+    
     /**
      * Main call
      *
@@ -1461,7 +1479,7 @@ class TypeAdapterMysql extends TypeAdapterFactory
         if (!isset($row['Create Table'])) {
             throw new Exception("Error getting table code, unknown output");
         }
-
+        
         $ret = "/*!40101 SET @saved_cs_client     = @@character_set_client */;" . PHP_EOL .
             "/*!40101 SET character_set_client = " . $dumpSettings['default-character-set'] . " */;" . PHP_EOL .
             $row['Create Table'] . ";" . PHP_EOL .
