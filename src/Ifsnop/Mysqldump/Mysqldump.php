@@ -308,6 +308,19 @@ class Mysqldump
     }
 
     /**
+     * Update the dump settings
+     * @param array $dumpSettings
+     * @throws Exception
+     */
+    public function setDumpSettings(array $dumpSettings) 
+    {
+        if (!is_array($dumpSettings)) {
+            throw new Exception("Dump settings must be an array");
+        }
+        $this->dumpSettings = self::array_replace_recursive($this->dumpSettings, $dumpSettings);
+    }
+    
+    /**
      * Adds the database handler
      * @param PDO $dbHandler
      * @throws Exception
