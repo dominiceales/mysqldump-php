@@ -68,6 +68,7 @@ class Mysqldump
 
     // Internal stuff
     private $tables = array();
+    private $temporaryTables = array();
     private $views = array();
     private $triggers = array();
     private $procedures = array();
@@ -140,7 +141,9 @@ class Mysqldump
             'init_commands' => array(),
             'net_buffer_length' => self::MAXLINESIZE,
             /* deprecated */
-            'disable-foreign-keys-check' => true
+            'disable-foreign-keys-check' => true,
+            /* custom */
+            'allow-temporary-tables' => false
         );
 
         $pdoSettingsDefault = array(
@@ -478,6 +481,15 @@ class Mysqldump
                     unset($this->dumpSettings['include-tables'][$elem]);
                 }
             }
+            // Check if the remaining are temporary tables
+            if ($this->dumpSettings['allow-temporary-tables']) {
+                foreach ($this->dumpSettings['include-tables'] as $elem => $tableName) {
+                    if (false !== $this->dbHandler->query($this->typeAdapter->show_create_table($tableName))) {
+                        array_push($this->temporaryTables, $tableName);
+                        unset($this->dumpSettings['include-tables'][$elem]);
+                    }
+                }
+            }
         }
 
         // Listing all views from database
@@ -543,12 +555,23 @@ class Mysqldump
      */
     private function exportTables()
     {
+        $this->exportTablesArray($this->tables, false);
+        $this->exportTablesArray($this->temporaryTables, true);
+    }
+    
+    /**
+     * Exports tables from database
+     *
+     * @return null
+     */
+    private function exportTablesArray($tables, $areTemporary = false)
+    {
         // Exporting tables one by one
-        foreach ($this->tables as $table) {
+        foreach ($tables as $table) {
             if ( $this->matches($table, $this->dumpSettings['exclude-tables']) ) {
                 continue;
             }
-            $this->getTableStructure($table);
+            $this->getTableStructure($table, $areTemporary);
             if ( false === $this->dumpSettings['no-data'] ) { // don't break compatibility with old trigger
                 $this->listValues($table);
             } else if ( true === $this->dumpSettings['no-data']
@@ -618,7 +641,7 @@ class Mysqldump
      * @param string $tableName  Name of table to export
      * @return null
      */
-    private function getTableStructure($tableName)
+    private function getTableStructure($tableName, $isTemporary = false)
     {
         if (!$this->dumpSettings['no-create-info']) {
             $ret = '';
@@ -632,7 +655,7 @@ class Mysqldump
                 $this->compressManager->write($ret);
                 if ($this->dumpSettings['add-drop-table']) {
                     $this->compressManager->write(
-                        $this->typeAdapter->drop_table($tableName)
+                        $this->typeAdapter->drop_table($tableName, $isTemporary)
                     );
                 }
                 $this->compressManager->write(
@@ -1710,9 +1733,10 @@ class TypeAdapterMysql extends TypeAdapterFactory
 
     public function drop_table()
     {
-        $this->check_parameters(func_num_args(), $expected_num_args = 1, __METHOD__);
+        $this->check_parameters(func_num_args(), $expected_num_args = 2, __METHOD__);
         $args = func_get_args();
-        return "DROP TABLE IF EXISTS `${args[0]}`;" . PHP_EOL;
+        $temporary = $args[1] ? 'TEMPORARY ' : '';
+        return "DROP ${temporary}TABLE IF EXISTS `${args[0]}`;" . PHP_EOL;
     }
 
     public function drop_view()
